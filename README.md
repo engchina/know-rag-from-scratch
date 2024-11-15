@@ -1,4 +1,4 @@
-# Aim for No. 1 RAG
+# Know RAG from scratch
 
 ## Deploy
 - v1.0.1: 東京リージョンと大阪リージョンのみをサポートしています。
