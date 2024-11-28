@@ -10,12 +10,13 @@ Click [![Deploy to Oracle Cloud](https://oci-resourcemanager-plugin.plugins.oci.
 ## Setup
 
 ```
-conda create -n no.1-rag python=3.11 -y
-conda activate no.1-rag
+conda create -n know-rag-from-scratch python=3.11 -y
+conda activate know-rag-from-scratch
 ```
 
 ```
-pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
+pip install -r requirements.txt
+# pip install -r requirements.txt -i https://pypi.tuna.tsinghua.edu.cn/simple
 # pip list --format=freeze > requirements.txt
 ```
 

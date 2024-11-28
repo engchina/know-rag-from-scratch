@@ -14,7 +14,7 @@ import oci
 import oracledb
 import pandas as pd
 import requests
-from dotenv import load_dotenv, find_dotenv, set_key
+from dotenv import load_dotenv, find_dotenv, set_key, get_key
 from langchain_anthropic import ChatAnthropic
 from langchain_community.chat_models import ChatOCIGenAI
 from langchain_community.embeddings import OCIGenAIEmbeddings
@@ -22,7 +22,7 @@ from langchain_community.vectorstores.utils import DistanceStrategy
 from langchain_core.messages import SystemMessage, HumanMessage
 from langchain_core.output_parsers import StrOutputParser
 from langchain_core.prompts import ChatPromptTemplate
-from langchain_openai import ChatOpenAI
+from langchain_openai import ChatOpenAI, AzureChatOpenAI
 from langfuse.callback import CallbackHandler
 from oracledb import DatabaseError
 from unstructured.chunking.title import chunk_by_title
@@ -33,8 +33,47 @@ from utils.common_util import get_dict_value
 from utils.generator_util import generate_unique_id
 
 custom_css = """
-body {
-  font-family: "Noto Sans JP", Arial, sans-serif !important;
+@font-face {
+  font-family: 'Noto Sans JP';
+  src: url('fonts/NotoSansJP-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Noto Sans SC';
+  src: url('fonts/NotoSansSC-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Noto Sans TC';
+  src: url('fonts/NotoSansSC-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Noto Sans HK';
+  src: url('fonts/NotoSansHK-Regular.otf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+@font-face {
+  font-family: 'Roboto';
+  src: url('fonts/Roboto-Regular.ttf') format('opentype');
+  font-weight: normal;
+  font-style: normal;
+}
+
+:root {
+  --global-font-family: "Noto Sans JP", "Noto Sans SC", "Noto Sans TC", "Noto Sans HK", "Roboto", Arial, sans-serif;
+}
+
+html, body, div, table, tr, td, p, strong, button {
+  font-family: var(--global-font-family) !important;
 }
 
 /* Hide sort buttons at gr.DataFrame */
@@ -318,8 +357,15 @@ def do_auth(username, password):
     return False
 
 
+def get_region():
+    oci_config_path = find_dotenv("/root/.oci/config")
+    region = get_key(oci_config_path, "region")
+    return region
+
+
 def generate_embedding_response(inputs: List[str]):
     config = oci.config.from_file('~/.oci/config', "DEFAULT")
+    region = get_region()
     generative_ai_inference_client = oci.generative_ai_inference.GenerativeAiInferenceClient(config=config,
                                                                                              service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
                                                                                              retry_strategy=oci.retry.NoneRetryStrategy(),
@@ -405,10 +451,11 @@ def process_text_chunks(unstructured_chunks):
 
 
 async def command_r_task(system_text, query_text, command_r_checkbox):
+    region = get_region()
     if command_r_checkbox:
         command_r_16k = ChatOCIGenAI(
-            model_id="cohere.command-r-16k",
-            service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+            model_id="cohere.command-r-08-2024",
+            service_endpoint=f"https://inference.generativeai.{region}.oci.oraclecloud.com",
             compartment_id=os.environ["OCI_COMPARTMENT_OCID"],
             model_kwargs={"temperature": 0.0, "max_tokens": 2048},
         )
@@ -425,7 +472,7 @@ async def command_r_task(system_text, query_text, command_r_checkbox):
         )
         async for chunk in command_r_16k.astream(messages, config={"callbacks": [langfuse_handler],
                                                                    "metadata": {
-                                                                       "ls_model_name": "cohere.command-r-16k"}}):
+                                                                       "ls_model_name": "cohere.command-r-08-2024"}}):
             yield chunk.content
         end_time = time.time()
         print(f"{end_time=}")
@@ -438,10 +485,11 @@ async def command_r_task(system_text, query_text, command_r_checkbox):
 
 
 async def command_r_plus_task(system_text, query_text, command_r_plus_checkbox):
+    region = get_region()
     if command_r_plus_checkbox:
         command_r_plus = ChatOCIGenAI(
-            model_id="cohere.command-r-plus",
-            service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+            model_id="cohere.command-r-plus-08-2024",
+            service_endpoint=f"https://inference.generativeai.{region}.oci.oraclecloud.com",
             compartment_id=os.environ["OCI_COMPARTMENT_OCID"],
             model_kwargs={"temperature": 0.0, "max_tokens": 2048},
         )
@@ -458,7 +506,7 @@ async def command_r_plus_task(system_text, query_text, command_r_plus_checkbox):
         )
         async for chunk in command_r_plus.astream(messages, config={"callbacks": [langfuse_handler],
                                                                     "metadata": {
-                                                                        "ls_model_name": "cohere.command-r-plus"}}):
+                                                                        "ls_model_name": "cohere.command-r-plus-08-2024"}}):
             yield chunk.content
         end_time = time.time()
         print(f"{end_time=}")
@@ -529,6 +577,78 @@ async def openai_gpt4_task(system_text, query_text, openai_gpt4_checkbox):
             host=os.environ["LANGFUSE_HOST"],
         )
         async for chunk in openai_gpt4.astream(messages, config={"callbacks": [langfuse_handler]}):
+            yield chunk.content
+        end_time = time.time()
+        print(f"{end_time=}")
+        inference_time = end_time - start_time
+        print(f"\n推論時間: {inference_time:.2f}秒")
+        yield f"\n推論時間: {inference_time:.2f}秒"
+        yield "TASK_DONE"
+    else:
+        yield "TASK_DONE"
+
+
+async def azure_openai_gpt4o_task(system_text, query_text, azure_openai_gpt4o_checkbox):
+    if azure_openai_gpt4o_checkbox:
+        load_dotenv(find_dotenv())
+        azure_openai_gpt4o = AzureChatOpenAI(
+            deployment_name="gpt-4o",
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"]
+        )
+        messages = [
+            SystemMessage(content=system_text),
+            HumanMessage(content=query_text),
+        ]
+        start_time = time.time()
+        print(f"{start_time=}")
+        langfuse_handler = CallbackHandler(
+            secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+            public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+            host=os.environ["LANGFUSE_HOST"],
+        )
+        async for chunk in azure_openai_gpt4o.astream(messages, config={"callbacks": [langfuse_handler]}):
+            yield chunk.content
+        end_time = time.time()
+        print(f"{end_time=}")
+        inference_time = end_time - start_time
+        print(f"\n推論時間: {inference_time:.2f}秒")
+        yield f"\n推論時間: {inference_time:.2f}秒"
+        yield "TASK_DONE"
+    else:
+        yield "TASK_DONE"
+
+
+async def azure_openai_gpt4_task(system_text, query_text, azure_openai_gpt4_checkbox):
+    if azure_openai_gpt4_checkbox:
+        load_dotenv(find_dotenv())
+        azure_openai_gpt4 = AzureChatOpenAI(
+            deployment_name="gpt-4",
+            temperature=0,
+            max_tokens=None,
+            timeout=None,
+            max_retries=2,
+            azure_endpoint=os.environ["AZURE_OPENAI_ENDPOINT"],
+            openai_api_key=os.environ["AZURE_OPENAI_API_KEY"],
+            openai_api_version=os.environ["AZURE_OPENAI_API_VERSION"]
+        )
+        messages = [
+            SystemMessage(content=system_text),
+            HumanMessage(content=query_text),
+        ]
+        start_time = time.time()
+        print(f"{start_time=}")
+        langfuse_handler = CallbackHandler(
+            secret_key=os.environ["LANGFUSE_SECRET_KEY"],
+            public_key=os.environ["LANGFUSE_PUBLIC_KEY"],
+            host=os.environ["LANGFUSE_HOST"],
+        )
+        async for chunk in azure_openai_gpt4.astream(messages, config={"callbacks": [langfuse_handler]}):
             yield chunk.content
         end_time = time.time()
         print(f"{end_time=}")
@@ -639,24 +759,44 @@ async def claude_3_haiku_task(system_text, query_text, claude_3_haiku_checkbox):
         yield "TASK_DONE"
 
 
-async def chat(system_text, command_r_user_text, command_r_plus_user_text,
-               openai_gpt4o_user_text, openai_gpt4_user_text,
-               claude_3_opus_user_text, claude_3_sonnet_user_text, claude_3_haiku_user_text,
-               command_r_checkbox, command_r_plus_checkbox,
-               openai_gpt4o_gen_checkbox, openai_gpt4_gen_checkbox,
-               claude_3_opus_checkbox, claude_3_sonnet_checkbox, claude_3_haiku_checkbox):
+async def chat(
+        system_text,
+        command_r_user_text,
+        command_r_plus_user_text,
+        openai_gpt4o_user_text,
+        openai_gpt4_user_text,
+        azure_openai_gpt4o_user_text,
+        azure_openai_gpt4_user_text,
+        claude_3_opus_user_text,
+        claude_3_sonnet_user_text,
+        claude_3_haiku_user_text,
+        command_r_checkbox,
+        command_r_plus_checkbox,
+        openai_gpt4o_gen_checkbox,
+        openai_gpt4_gen_checkbox,
+        azure_openai_gpt4o_gen_checkbox,
+        azure_openai_gpt4_gen_checkbox,
+        claude_3_opus_checkbox,
+        claude_3_sonnet_checkbox,
+        claude_3_haiku_checkbox
+):
     command_r_gen = command_r_task(system_text, command_r_user_text, command_r_checkbox)
     command_r_plus_gen = command_r_plus_task(system_text, command_r_plus_user_text, command_r_plus_checkbox)
     openai_gpt4o_gen = openai_gpt4o_task(system_text, openai_gpt4o_user_text, openai_gpt4o_gen_checkbox)
     openai_gpt4_gen = openai_gpt4_task(system_text, openai_gpt4_user_text, openai_gpt4_gen_checkbox)
+    azure_openai_gpt4o_gen = azure_openai_gpt4o_task(system_text, azure_openai_gpt4o_user_text,
+                                                     azure_openai_gpt4o_gen_checkbox)
+    azure_openai_gpt4_gen = azure_openai_gpt4_task(system_text, azure_openai_gpt4_user_text,
+                                                   azure_openai_gpt4_gen_checkbox)
     claude_3_opus_gen = claude_3_opus_task(system_text, claude_3_opus_user_text, claude_3_opus_checkbox)
     claude_3_sonnet_gen = claude_3_sonnet_task(system_text, claude_3_sonnet_user_text, claude_3_sonnet_checkbox)
     claude_3_haiku_gen = claude_3_haiku_task(system_text, claude_3_haiku_user_text, claude_3_haiku_checkbox)
 
-    responses_status = ["", "", "", "", "", "", ""]
+    responses_status = ["", "", "", "", "", "", "", "", ""]
     while True:
-        responses = ["", "", "", "", "", "", ""]
+        responses = ["", "", "", "", "", "", "", "", ""]
         generators = [command_r_gen, command_r_plus_gen, openai_gpt4o_gen, openai_gpt4_gen,
+                      azure_openai_gpt4o_gen, azure_openai_gpt4_gen,
                       claude_3_opus_gen, claude_3_sonnet_gen, claude_3_haiku_gen]
 
         for i, gen in enumerate(generators):
@@ -682,6 +822,8 @@ def set_chat_llm_answer(llm_answer_checkbox):
     command_r_plus_answer_visible = False
     openai_gpt4o_answer_visible = False
     openai_gpt4_answer_visible = False
+    azure_openai_gpt4o_answer_visible = False
+    azure_openai_gpt4_answer_visible = False
     claude_3_opus_answer_visible = False
     claude_3_sonnet_answer_visible = False
     claude_3_haiku_answer_visible = False
@@ -693,16 +835,25 @@ def set_chat_llm_answer(llm_answer_checkbox):
         openai_gpt4o_answer_visible = True
     if "openai/gpt-4" in llm_answer_checkbox:
         openai_gpt4_answer_visible = True
+    if "azure_openai/gpt-4o" in llm_answer_checkbox:
+        azure_openai_gpt4o_answer_visible = True
+    if "azure_openai/gpt-4" in llm_answer_checkbox:
+        azure_openai_gpt4_answer_visible = True
     if "claude/opus" in llm_answer_checkbox:
         claude_3_opus_answer_visible = True
     if "claude/sonnet" in llm_answer_checkbox:
         claude_3_sonnet_answer_visible = True
     if "claude/haiku" in llm_answer_checkbox:
         claude_3_haiku_answer_visible = True
-    return (gr.Accordion(visible=command_r_answer_visible), gr.Accordion(visible=command_r_plus_answer_visible),
+    return (gr.Accordion(visible=command_r_answer_visible),
+            gr.Accordion(visible=command_r_plus_answer_visible),
             gr.Accordion(visible=openai_gpt4o_answer_visible),
-            gr.Accordion(visible=openai_gpt4_answer_visible), gr.Accordion(visible=claude_3_opus_answer_visible),
-            gr.Accordion(visible=claude_3_sonnet_answer_visible), gr.Accordion(visible=claude_3_haiku_answer_visible))
+            gr.Accordion(visible=openai_gpt4_answer_visible),
+            gr.Accordion(visible=azure_openai_gpt4o_answer_visible),
+            gr.Accordion(visible=azure_openai_gpt4_answer_visible),
+            gr.Accordion(visible=claude_3_opus_answer_visible),
+            gr.Accordion(visible=claude_3_sonnet_answer_visible),
+            gr.Accordion(visible=claude_3_haiku_answer_visible))
 
 
 def set_chat_llm_evaluation(llm_evaluation_checkbox):
@@ -710,6 +861,8 @@ def set_chat_llm_evaluation(llm_evaluation_checkbox):
     command_r_plus_evaluation_visible = False
     openai_gpt4o_evaluation_visible = False
     openai_gpt4_evaluation_visible = False
+    azure_openai_gpt4o_evaluation_visible = False
+    azure_openai_gpt4_evaluation_visible = False
     claude_3_opus_evaluation_visible = False
     claude_3_sonnet_evaluation_visible = False
     claude_3_haiku_evaluation_visible = False
@@ -718,12 +871,17 @@ def set_chat_llm_evaluation(llm_evaluation_checkbox):
         command_r_plus_evaluation_visible = True
         openai_gpt4o_evaluation_visible = True
         openai_gpt4_evaluation_visible = True
+        azure_openai_gpt4o_evaluation_visible = True
+        azure_openai_gpt4_evaluation_visible = True
         claude_3_opus_evaluation_visible = True
         claude_3_sonnet_evaluation_visible = True
         claude_3_haiku_evaluation_visible = True
-    return (gr.Accordion(visible=command_r_evaluation_visible), gr.Accordion(visible=command_r_plus_evaluation_visible),
+    return (gr.Accordion(visible=command_r_evaluation_visible),
+            gr.Accordion(visible=command_r_plus_evaluation_visible),
             gr.Accordion(visible=openai_gpt4o_evaluation_visible),
             gr.Accordion(visible=openai_gpt4_evaluation_visible),
+            gr.Accordion(visible=azure_openai_gpt4o_evaluation_visible),
+            gr.Accordion(visible=azure_openai_gpt4_evaluation_visible),
             gr.Accordion(visible=claude_3_opus_evaluation_visible),
             gr.Accordion(visible=claude_3_sonnet_evaluation_visible),
             gr.Accordion(visible=claude_3_haiku_evaluation_visible))
@@ -738,6 +896,8 @@ async def chat_stream(system_text, query_text, llm_answer_checkbox):
     command_r_plus_user_text = query_text
     openai_gpt4o_user_text = query_text
     openai_gpt4_user_text = query_text
+    azure_openai_gpt4o_user_text = query_text
+    azure_openai_gpt4_user_text = query_text
     claude_3_opus_user_text = query_text
     claude_3_sonnet_user_text = query_text
     claude_3_haiku_user_text = query_text
@@ -746,6 +906,8 @@ async def chat_stream(system_text, query_text, llm_answer_checkbox):
     command_r_plus_checkbox = False
     openai_gpt4o_checkbox = False
     openai_gpt4_checkbox = False
+    azure_openai_gpt4o_checkbox = False
+    azure_openai_gpt4_checkbox = False
     claude_3_opus_checkbox = False
     claude_3_sonnet_checkbox = False
     claude_3_haiku_checkbox = False
@@ -757,6 +919,10 @@ async def chat_stream(system_text, query_text, llm_answer_checkbox):
         openai_gpt4o_checkbox = True
     if "openai/gpt-4" in llm_answer_checkbox:
         openai_gpt4_checkbox = True
+    if "azure_openai/gpt-4o" in llm_answer_checkbox:
+        azure_openai_gpt4o_checkbox = True
+    if "azure_openai/gpt-4" in llm_answer_checkbox:
+        azure_openai_gpt4_checkbox = True
     if "claude/opus" in llm_answer_checkbox:
         claude_3_opus_checkbox = True
     if "claude/sonnet" in llm_answer_checkbox:
@@ -768,30 +934,47 @@ async def chat_stream(system_text, query_text, llm_answer_checkbox):
     command_r_plus_response = ""
     openai_gpt4o_response = ""
     openai_gpt4_response = ""
+    azure_openai_gpt4o_response = ""
+    azure_openai_gpt4_response = ""
     claude_3_opus_response = ""
     claude_3_sonnet_response = ""
     claude_3_haiku_response = ""
-    async for r, r_plus, gpt4o, gpt4, opus, sonnet, haiku in chat(system_text, command_r_user_text,
-                                                                  command_r_plus_user_text,
-                                                                  openai_gpt4o_user_text, openai_gpt4_user_text,
-                                                                  claude_3_opus_user_text, claude_3_sonnet_user_text,
-                                                                  claude_3_haiku_user_text,
-                                                                  command_r_checkbox,
-                                                                  command_r_plus_checkbox, openai_gpt4o_checkbox,
-                                                                  openai_gpt4_checkbox, claude_3_opus_checkbox,
-                                                                  claude_3_sonnet_checkbox, claude_3_haiku_checkbox):
+    async for r, r_plus, gpt4o, gpt4, azure_gpt4o, azure_gpt4, opus, sonnet, haiku in chat(
+            system_text,
+            command_r_user_text,
+            command_r_plus_user_text,
+            openai_gpt4o_user_text,
+            openai_gpt4_user_text,
+            azure_openai_gpt4o_user_text,
+            azure_openai_gpt4_user_text,
+            claude_3_opus_user_text,
+            claude_3_sonnet_user_text,
+            claude_3_haiku_user_text,
+            command_r_checkbox,
+            command_r_plus_checkbox,
+            openai_gpt4o_checkbox,
+            openai_gpt4_checkbox,
+            azure_openai_gpt4o_checkbox,
+            azure_openai_gpt4_checkbox,
+            claude_3_opus_checkbox,
+            claude_3_sonnet_checkbox,
+            claude_3_haiku_checkbox
+    ):
         command_r_response += r
         command_r_plus_response += r_plus
         openai_gpt4o_response += gpt4o
         openai_gpt4_response += gpt4
+        azure_openai_gpt4o_response += azure_gpt4o
+        azure_openai_gpt4_response += azure_gpt4
         claude_3_opus_response += opus
         claude_3_sonnet_response += sonnet
         claude_3_haiku_response += haiku
         yield (command_r_response, command_r_plus_response, openai_gpt4o_response, openai_gpt4_response,
+               azure_openai_gpt4o_response, azure_openai_gpt4_response,
                claude_3_opus_response, claude_3_sonnet_response, claude_3_haiku_response)
 
 
-def create_oci_cred(user_ocid, tenancy_ocid, fingerprint, private_key_file):
+def create_oci_cred(user_ocid, tenancy_ocid, fingerprint, private_key_file, region):
     def process_private_key(private_key_file_path):
         with open(private_key_file_path, 'r') as file:
             lines = file.readlines()
@@ -807,10 +990,13 @@ def create_oci_cred(user_ocid, tenancy_ocid, fingerprint, private_key_file):
         raise gr.Error("Fingerprintを入力してください")
     if not private_key_file:
         raise gr.Error("Private Keyを入力してください")
+    if not region:
+        raise gr.Error("Regionを選択してください")
 
     user_ocid = user_ocid.strip()
     tenancy_ocid = tenancy_ocid.strip()
     fingerprint = fingerprint.strip()
+    region = region.strip()
 
     # set up OCI config
     if not os.path.exists("/root/.oci"):
@@ -821,7 +1007,7 @@ def create_oci_cred(user_ocid, tenancy_ocid, fingerprint, private_key_file):
     key_file_path = '/root/.oci/oci_api_key.pem'
     set_key(oci_config_path, "user", user_ocid, quote_mode="never")
     set_key(oci_config_path, "tenancy", tenancy_ocid, quote_mode="never")
-    set_key(oci_config_path, "region", 'us-chicago-1', quote_mode="never")
+    set_key(oci_config_path, "region", region, quote_mode="never")
     set_key(oci_config_path, "fingerprint", fingerprint, quote_mode="never")
     set_key(oci_config_path, "key_file", key_file_path, quote_mode="never")
     shutil.copy(private_key_file.name, key_file_path)
@@ -928,6 +1114,30 @@ def create_openai_cred(openai_cred_base_url, openai_cred_api_key):
     return gr.Textbox(value=openai_cred_base_url), gr.Textbox(value=openai_cred_api_key)
 
 
+def create_azure_openai_cred(azure_openai_cred_endpoint, azure_openai_cred_api_key, azure_openai_cred_api_version):
+    if not azure_openai_cred_endpoint:
+        raise gr.Error("Azure OpenAI Endpointを入力してください")
+    if not azure_openai_cred_api_key:
+        raise gr.Error("Azure OpenAI API Keyを入力してください")
+    if not azure_openai_cred_api_version:
+        raise gr.Error("Azure OpenAI API Versionを入力してください")
+    azure_openai_cred_endpoint = azure_openai_cred_endpoint.strip()
+    azure_openai_cred_api_key = azure_openai_cred_api_key.strip()
+    azure_openai_cred_api_version = azure_openai_cred_api_version.strip()
+    env_path = find_dotenv()
+    os.environ["AZURE_OPENAI_ENDPOINT"] = azure_openai_cred_endpoint
+    os.environ["AZURE_OPENAI_API_KEY"] = azure_openai_cred_api_key
+    os.environ["AZURE_OPENAI_API_VERSION"] = azure_openai_cred_api_version
+    set_key(env_path, "AZURE_OPENAI_ENDPOINT", azure_openai_cred_endpoint, quote_mode="never")
+    set_key(env_path, "AZURE_OPENAI_API_KEY", azure_openai_cred_api_key, quote_mode="never")
+    set_key(env_path, "AZURE_OPENAI_API_VERSION", azure_openai_cred_api_version, quote_mode="never")
+    load_dotenv(find_dotenv())
+    gr.Info("Azure OpenAI API Keyの設定が完了しました")
+    return gr.Textbox(value=azure_openai_cred_endpoint), \
+        gr.Textbox(value=azure_openai_cred_api_key), \
+        gr.Textbox(value=azure_openai_cred_api_version)
+
+
 def create_claude_cred(claude_cred_api_key):
     if not claude_cred_api_key:
         raise gr.Error("Claude API Keyを入力してください")
@@ -1022,10 +1232,11 @@ CREATE TABLE IF NOT EXISTS {DEFAULT_COLLECTION_NAME}_embedding (
     output_sql_text += "\n" + create_preference_plsql.strip() + "\n"
     output_sql_text += "\n" + create_index_sql.strip() + ";"
 
+    region = get_region()
     # Default config file and profile
     embed = OCIGenAIEmbeddings(
         model_id=os.environ["OCI_COHERE_EMBED_MODEL"],
-        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        service_endpoint=f"https://inference.generativeai.{region}.oci.oraclecloud.com",
         compartment_id=os.environ["OCI_COMPARTMENT_OCID"]
     )
 
@@ -1061,10 +1272,11 @@ CREATE TABLE IF NOT EXISTS {DEFAULT_COLLECTION_NAME}_embedding (
 
 def test_oci_cred(test_query_text):
     test_query_vector = ""
+    region = get_region()
     embed_genai_params = {
         "provider": "ocigenai",
         "credential_name": "OCI_CRED",
-        "url": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130/actions/embedText",
+        "url": f"https://inference.generativeai.{region}.oci.oraclecloud.com/20231130/actions/embedText",
         "model": "cohere.embed-multilingual-v3.0"
     }
 
@@ -1388,9 +1600,10 @@ def generate_query(query_text, generate_query_radio):
 
     # chat_llm = ChatOpenAI(api_key=os.environ["OPENAI_API_KEY"], base_url=os.environ["OPENAI_BASE_URL"],
     #                       model=os.environ["OPENAI_MODEL_NAME"], temperature=0)
+    region = get_region()
     chat_llm = ChatOCIGenAI(
-        model_id="cohere.command-r-plus",
-        service_endpoint="https://inference.generativeai.us-chicago-1.oci.oraclecloud.com",
+        model_id="cohere.command-r-plus-08-2024",
+        service_endpoint=f"https://inference.generativeai.{region}.oci.oraclecloud.com",
         compartment_id=os.environ["OCI_COMPARTMENT_OCID"],
         model_kwargs={"temperature": 0.0, "max_tokens": 2048},
     )
@@ -1497,6 +1710,7 @@ def generate_query(query_text, generate_query_radio):
             generate_query2 = re.sub(r'^2\. ', '', step_back_queries[1])
             generate_query3 = re.sub(r'^3\. ', '', step_back_queries[2])
     elif generate_query_radio == "Customized-Multi-Step-Query":
+        region = get_region()
         select_multi_step_query_sql = f"""
                 SELECT json_value(dt.cmetadata, '$.file_name') name, dc.embed_id embed_id, dc.embed_data embed_data, dc.doc_id doc_id
                 FROM {DEFAULT_COLLECTION_NAME}_embedding dc, {DEFAULT_COLLECTION_NAME}_collection dt
@@ -1504,7 +1718,7 @@ def generate_query(query_text, generate_query_radio):
                 ORDER BY vector_distance(dc.embed_vector , (
                         SELECT to_vector(et.embed_vector) embed_vector
                         FROM
-                            dbms_vector_chain.utl_to_embeddings(:query_text, JSON('{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}')) t,
+                            dbms_vector_chain.utl_to_embeddings(:query_text, JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.{region}.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
                             JSON_TABLE ( t.column_value, '$[*]'
                                     COLUMNS (
                                         embed_id NUMBER PATH '$.embed_id',
@@ -1550,16 +1764,25 @@ def generate_query(query_text, generate_query_radio):
     return gr.Textbox(value=generate_query1), gr.Textbox(value=generate_query2), gr.Textbox(value=generate_query3)
 
 
-def search_document(reranker_model_radio_input,
-                    reranker_top_k_slider_input,
-                    reranker_threshold_slider_input,
-                    threshold_value_slider_input,
-                    top_k_slider_input, doc_id_all_checkbox_input,
-                    doc_id_checkbox_group_input, text_search_checkbox_input, text_search_k_slider_input,
-                    query_text_input, sub_query1_text_input, sub_query2_text_input,
-                    sub_query3_text_input, partition_by_k_slider_input, answer_by_one_checkbox_input,
-                    extend_first_chunk_size_input,
-                    extend_around_chunk_size_input):
+def search_document(
+        reranker_model_radio_input,
+        reranker_top_k_slider_input,
+        reranker_threshold_slider_input,
+        threshold_value_slider_input,
+        top_k_slider_input,
+        doc_id_all_checkbox_input,
+        doc_id_checkbox_group_input,
+        text_search_checkbox_input,
+        text_search_k_slider_input,
+        query_text_input,
+        sub_query1_text_input,
+        sub_query2_text_input,
+        sub_query3_text_input,
+        partition_by_k_slider_input,
+        answer_by_one_checkbox_input,
+        extend_first_chunk_size_input,
+        extend_around_chunk_size_input
+):
     """
     Retrieve relevant splits for any question using similarity search.
     This is simply "top K" retrieval where we select documents based on embedding similarity to the query.
@@ -1625,6 +1848,8 @@ def search_document(reranker_model_radio_input,
     command_r_plus_result = "Not queried."
     gpt4o_result = "Not queried."
     gpt4_result = "Not queried."
+    azure_gpt4o_result = "Not queried."
+    azure_gpt4_result = "Not queried."
     opus_result = "Not queried."
     sonnet_result = "Not queried."
     haiku_result = "Not queried."
@@ -1647,13 +1872,14 @@ def search_document(reranker_model_radio_input,
     """
     where_sql = """
                     WHERE 1 = 1 """
-    where_threshold_sql = """
+    region = get_region()
+    where_threshold_sql = f"""
                     AND vector_distance(dc.embed_vector, (
                             SELECT to_vector(et.embed_vector) embed_vector
                             FROM
                                 dbms_vector_chain.utl_to_embeddings(
                                         :query_text, 
-                                        JSON('{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}')) t,
+                                        JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.{region}.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
                                 JSON_TABLE ( t.column_value, '$[*]'
                                         COLUMNS (
                                             embed_id NUMBER PATH '$.embed_id',
@@ -1677,13 +1903,14 @@ def search_document(reranker_model_radio_input,
                         CONNECT BY REGEXP_SUBSTR(:doc_ids, '''[^'']+''', 1, LEVEL) IS NOT NULL
                     ) """
     # v4
+    region = get_region()
     base_sql = f"""
                     SELECT dc.doc_id doc_id, dc.embed_id embed_id, vector_distance(dc.embed_vector, (
                             SELECT to_vector(et.embed_vector) embed_vector
                             FROM
                                 dbms_vector_chain.utl_to_embeddings(
                                         :query_text, 
-                                        JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
+                                        JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.{region}.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
                                 JSON_TABLE ( t.column_value, '$[*]'
                                         COLUMNS (
                                             embed_id NUMBER PATH '$.embed_id',
@@ -1809,13 +2036,14 @@ def search_document(reranker_model_radio_input,
         if len(search_text) > 0:
             where_sql += """
                         AND (""" + search_text + """) """
+            region = get_region()
             full_text_search_sql = f"""
                         SELECT dc.doc_id doc_id, dc.embed_id embed_id, vector_distance(dc.embed_vector, (
                                 SELECT to_vector(et.embed_vector) embed_vector
                                 FROM
                                     dbms_vector_chain.utl_to_embeddings(
                                             :query_text, 
-                                            JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.us-chicago-1.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
+                                            JSON('{{"provider": "ocigenai", "credential_name": "OCI_CRED", "url": "https://inference.generativeai.{region}.oci.oraclecloud.com/20231130/actions/embedText", "model": "cohere.embed-multilingual-v3.0"}}')) t,
                                     JSON_TABLE ( t.column_value, '$[*]'
                                             COLUMNS (
                                                 embed_id NUMBER PATH '$.embed_id',
@@ -1901,7 +2129,8 @@ def search_document(reranker_model_radio_input,
                                      headers=["NO", "CONTENT", "EMBED_ID", "SOURCE", "DISTANCE", "SCORE", "KEY_WORDS"],
                                      column_widths=["4%", "68%", "6%", "8%", "6%", "8%"]),
                         gr.Textbox(command_r_result), gr.Textbox(command_r_plus_result), gr.Textbox(gpt4o_result),
-                        gr.Textbox(gpt4_result), gr.Textbox(opus_result), gr.Textbox(sonnet_result),
+                        gr.Textbox(gpt4_result), gr.Textbox(azure_gpt4o_result),
+                        gr.Textbox(azure_gpt4_result), gr.Textbox(opus_result), gr.Textbox(sonnet_result),
                         gr.Textbox(haiku_result), gr.Textbox(sub_query1_text_input), gr.Textbox(sub_query2_text_input),
                         gr.Textbox(sub_query3_text_input))
 
@@ -2048,6 +2277,8 @@ async def chat_document(search_result,
     command_r_plus_response = ""
     openai_gpt4o_response = ""
     openai_gpt4_response = ""
+    azure_openai_gpt4o_response = ""
+    azure_openai_gpt4_response = ""
     claude_3_opus_response = ""
     claude_3_sonnet_response = ""
     claude_3_haiku_response = ""
@@ -2056,6 +2287,8 @@ async def chat_document(search_result,
     command_r_plus_checkbox = False
     openai_gpt4o_checkbox = False
     openai_gpt4_checkbox = False
+    azure_openai_gpt4o_checkbox = False
+    azure_openai_gpt4_checkbox = False
     claude_3_opus_checkbox = False
     claude_3_sonnet_checkbox = False
     claude_3_haiku_checkbox = False
@@ -2067,6 +2300,10 @@ async def chat_document(search_result,
         openai_gpt4o_checkbox = True
     if "openai/gpt-4" in llm_answer_checkbox:
         openai_gpt4_checkbox = True
+    if "azure_openai/gpt-4o" in llm_answer_checkbox:
+        azure_openai_gpt4o_checkbox = True
+    if "azure_openai/gpt-4" in llm_answer_checkbox:
+        azure_openai_gpt4_checkbox = True
     if "claude/opus" in llm_answer_checkbox:
         claude_3_opus_checkbox = True
     if "claude/sonnet" in llm_answer_checkbox:
@@ -2109,34 +2346,62 @@ async def chat_document(search_result,
     command_r_plus_user_text = user_text
     openai_gpt4o_user_text = user_text
     openai_gpt4_user_text = user_text
+    azure_openai_gpt4o_user_text = user_text
+    azure_openai_gpt4_user_text = user_text
     claude_3_opus_user_text = user_text
     claude_3_sonnet_user_text = user_text
     claude_3_haiku_user_text = user_text
 
-    async for r, r_plus, gpt4o, gpt4, opus, sonnet, haiku in chat(system_text, command_r_user_text,
-                                                                  command_r_plus_user_text,
-                                                                  openai_gpt4o_user_text, openai_gpt4_user_text,
-                                                                  claude_3_opus_user_text, claude_3_sonnet_user_text,
-                                                                  claude_3_haiku_user_text, command_r_checkbox,
-                                                                  command_r_plus_checkbox, openai_gpt4o_checkbox,
-                                                                  openai_gpt4_checkbox, claude_3_opus_checkbox,
-                                                                  claude_3_sonnet_checkbox, claude_3_haiku_checkbox):
+    async for r, r_plus, gpt4o, gpt4, azure_gpt4o, azure_gpt4, opus, sonnet, haiku in chat(
+            system_text,
+            command_r_user_text,
+            command_r_plus_user_text,
+            openai_gpt4o_user_text,
+            openai_gpt4_user_text,
+            azure_openai_gpt4o_user_text,
+            azure_openai_gpt4_user_text,
+            claude_3_opus_user_text,
+            claude_3_sonnet_user_text,
+            claude_3_haiku_user_text,
+            command_r_checkbox,
+            command_r_plus_checkbox,
+            openai_gpt4o_checkbox,
+            openai_gpt4_checkbox,
+            azure_openai_gpt4o_checkbox,
+            azure_openai_gpt4_checkbox,
+            claude_3_opus_checkbox,
+            claude_3_sonnet_checkbox,
+            claude_3_haiku_checkbox
+    ):
         command_r_response += r
         command_r_plus_response += r_plus
         openai_gpt4o_response += gpt4o
         openai_gpt4_response += gpt4
+        azure_openai_gpt4o_response += azure_gpt4o
+        azure_openai_gpt4_response += azure_gpt4
         claude_3_opus_response += opus
         claude_3_sonnet_response += sonnet
         claude_3_haiku_response += haiku
         yield (command_r_response, command_r_plus_response, openai_gpt4o_response, openai_gpt4_response,
+               azure_openai_gpt4o_response, azure_openai_gpt4_response,
                claude_3_opus_response, claude_3_sonnet_response, claude_3_haiku_response)
 
 
-async def eval_ragas(llm_answer_checkbox,
-                     llm_evaluation_checkbox,
-                     system_text, standard_answer_text,
-                     command_r_response, command_r_plus_response, openai_gpt4o_response,
-                     openai_gpt4_response, claude_3_opus_response, claude_3_sonnet_response, claude_3_haiku_response):
+async def eval_ragas(
+        llm_answer_checkbox,
+        llm_evaluation_checkbox,
+        system_text,
+        standard_answer_text,
+        command_r_response,
+        command_r_plus_response,
+        openai_gpt4o_response,
+        openai_gpt4_response,
+        azure_openai_gpt4o_response,
+        azure_openai_gpt4_response,
+        claude_3_opus_response,
+        claude_3_sonnet_response,
+        claude_3_haiku_response
+):
     def remove_last_line(text):
         if text:
             lines = text.splitlines()
@@ -2158,6 +2423,8 @@ async def eval_ragas(llm_answer_checkbox,
         command_r_plus_checkbox = False
         openai_gpt4o_checkbox = False
         openai_gpt4_checkbox = False
+        azure_openai_gpt4o_checkbox = False
+        azure_openai_gpt4_checkbox = False
         claude_3_opus_checkbox = False
         claude_3_sonnet_checkbox = False
         claude_3_haiku_checkbox = False
@@ -2169,6 +2436,10 @@ async def eval_ragas(llm_answer_checkbox,
             openai_gpt4o_checkbox = True
         if "openai/gpt-4" in llm_answer_checkbox:
             openai_gpt4_checkbox = True
+        if "azure_openai/gpt-4o" in llm_answer_checkbox:
+            azure_openai_gpt4o_checkbox = True
+        if "azure_openai/gpt-4" in llm_answer_checkbox:
+            azure_openai_gpt4_checkbox = True
         if "claude/opus" in llm_answer_checkbox:
             claude_3_opus_checkbox = True
         if "claude/sonnet" in llm_answer_checkbox:
@@ -2180,6 +2451,8 @@ async def eval_ragas(llm_answer_checkbox,
         command_r_plus_response = remove_last_line(command_r_plus_response)
         openai_gpt4o_response = remove_last_line(openai_gpt4o_response)
         openai_gpt4_response = remove_last_line(openai_gpt4_response)
+        azure_openai_gpt4o_response = remove_last_line(azure_openai_gpt4o_response)
+        azure_openai_gpt4_response = remove_last_line(azure_openai_gpt4_response)
         claude_3_opus_response = remove_last_line(claude_3_opus_response)
         claude_3_sonnet_response = remove_last_line(claude_3_sonnet_response)
         claude_3_haiku_response = remove_last_line(claude_3_haiku_response)
@@ -2220,6 +2493,24 @@ async def eval_ragas(llm_answer_checkbox,
 
 -出力-\n　"""
 
+        azure_openai_gpt4o_user_text = f"""
+-標準回答-
+{standard_answer_text}
+
+-与えられた回答-
+{azure_openai_gpt4o_response}
+
+-出力-\n　"""
+
+        azure_openai_gpt4_user_text = f"""
+-標準回答-
+{standard_answer_text}
+
+-与えられた回答-
+{azure_openai_gpt4_response}
+
+-出力-\n　"""
+
         claude_3_opus_user_text = f"""
 -標準回答-
 {standard_answer_text}
@@ -2251,39 +2542,56 @@ async def eval_ragas(llm_answer_checkbox,
         eval_command_r_plus_response = ""
         eval_openai_gpt4o_response = ""
         eval_openai_gpt4_response = ""
+        eval_azure_openai_gpt4o_response = ""
+        eval_azure_openai_gpt4_response = ""
         eval_claude_3_opus_response = ""
         eval_claude_3_sonnet_response = ""
         eval_claude_3_haiku_response = ""
 
-        async for r, r_plus, gpt4o, gpt4, opus, sonnet, haiku in chat(system_text, command_r_user_text,
-                                                                      command_r_plus_user_text,
-                                                                      openai_gpt4o_user_text, openai_gpt4_user_text,
-                                                                      claude_3_opus_user_text,
-                                                                      claude_3_sonnet_user_text,
-                                                                      claude_3_haiku_user_text, command_r_checkbox,
-                                                                      command_r_plus_checkbox, openai_gpt4o_checkbox,
-                                                                      openai_gpt4_checkbox, claude_3_opus_checkbox,
-                                                                      claude_3_sonnet_checkbox,
-                                                                      claude_3_haiku_checkbox):
+        async for r, r_plus, gpt4o, gpt4, azure_gpt4o, azure_gpt4, opus, sonnet, haiku in chat(
+                system_text,
+                command_r_user_text,
+                command_r_plus_user_text,
+                openai_gpt4o_user_text,
+                openai_gpt4_user_text,
+                azure_openai_gpt4o_user_text,
+                azure_openai_gpt4_user_text,
+                claude_3_opus_user_text,
+                claude_3_sonnet_user_text,
+                claude_3_haiku_user_text,
+                command_r_checkbox,
+                command_r_plus_checkbox,
+                openai_gpt4o_checkbox,
+                openai_gpt4_checkbox,
+                azure_openai_gpt4o_checkbox,
+                azure_openai_gpt4_checkbox,
+                claude_3_opus_checkbox,
+                claude_3_sonnet_checkbox,
+                claude_3_haiku_checkbox
+        ):
             eval_command_r_response += r
             eval_command_r_plus_response += r_plus
             eval_openai_gpt4o_response += gpt4o
             eval_openai_gpt4_response += gpt4
+            eval_azure_openai_gpt4o_response += azure_gpt4o
+            eval_azure_openai_gpt4_response += azure_gpt4
             eval_claude_3_opus_response += opus
             eval_claude_3_sonnet_response += sonnet
             eval_claude_3_haiku_response += haiku
             yield (eval_command_r_response, eval_command_r_plus_response, eval_openai_gpt4o_response,
-                   eval_openai_gpt4_response,
+                   eval_openai_gpt4_response, eval_azure_openai_gpt4o_response, eval_azure_openai_gpt4_response,
                    eval_claude_3_opus_response, eval_claude_3_sonnet_response, eval_claude_3_haiku_response)
 
 
 def generate_download_file(search_result, llm_answer_checkbox, llm_evaluation_checkbox,
                            query_text, standard_answer_text,
                            command_r_response, command_r_plus_response, openai_gpt4o_response,
-                           openai_gpt4_response, claude_3_opus_response, claude_3_sonnet_response,
+                           openai_gpt4_response, azure_openai_gpt4o_response,
+                           azure_openai_gpt4_response, claude_3_opus_response, claude_3_sonnet_response,
                            claude_3_haiku_response,
                            command_r_evaluation, command_r_plus_evaluation, openai_gpt4o_evaluation,
-                           openai_gpt4_evaluation, claude_3_opus_evaluation, claude_3_sonnet_evaluation,
+                           openai_gpt4_evaluation, azure_openai_gpt4o_evaluation,
+                           azure_openai_gpt4_evaluation, claude_3_opus_evaluation, claude_3_sonnet_evaluation,
                            claude_3_haiku_evaluation
                            ):
     # 创建一些示例 DataFrame
@@ -2331,6 +2639,24 @@ def generate_download_file(search_result, llm_answer_checkbox, llm_evaluation_ch
     else:
         openai_gpt4_response = ""
         openai_gpt4_evaluation = ""
+    if "azure_openai/gpt-4o" in llm_answer_checkbox:
+        azure_openai_gpt4o_response = azure_openai_gpt4o_response
+        if llm_evaluation_checkbox:
+            azure_openai_gpt4o_evaluation = azure_openai_gpt4o_evaluation
+        else:
+            azure_openai_gpt4o_evaluation = ""
+    else:
+        azure_openai_gpt4o_response = ""
+        azure_openai_gpt4o_evaluation = ""
+    if "azure_openai/gpt-4" in llm_answer_checkbox:
+        azure_openai_gpt4_response = azure_openai_gpt4_response
+        if llm_evaluation_checkbox:
+            azure_openai_gpt4_evaluation = azure_openai_gpt4_evaluation
+        else:
+            azure_openai_gpt4_evaluation = ""
+    else:
+        azure_openai_gpt4_response = ""
+        azure_openai_gpt4_evaluation = ""
     if "claude/opus" in llm_answer_checkbox:
         claude_3_opus_response = claude_3_opus_response
         if llm_evaluation_checkbox:
@@ -2360,12 +2686,15 @@ def generate_download_file(search_result, llm_answer_checkbox, llm_evaluation_ch
         claude_3_haiku_evaluation = ""
 
     df3 = pd.DataFrame({'LLM モデル': ["cohere/command-r", "cohere/command-r-plus", "openai/gpt-4o", "openai/gpt-4",
+                                       "azure_openai/gpt-4o", "azure_openai/gpt-4",
                                        "claude/opus", "claude/sonnet", "claude/haiku"],
                         'LLM メッセージ': [command_r_response, command_r_plus_response, openai_gpt4o_response,
-                                           openai_gpt4_response, claude_3_opus_response, claude_3_sonnet_response,
+                                           openai_gpt4_response, azure_openai_gpt4o_response,
+                                           azure_openai_gpt4_response, claude_3_opus_response, claude_3_sonnet_response,
                                            claude_3_haiku_response],
                         'LLM 評価': [command_r_evaluation, command_r_plus_evaluation, openai_gpt4o_evaluation,
-                                     openai_gpt4_evaluation, claude_3_opus_evaluation, claude_3_sonnet_evaluation,
+                                     openai_gpt4_evaluation, azure_openai_gpt4o_evaluation,
+                                     azure_openai_gpt4_evaluation, claude_3_opus_evaluation, claude_3_sonnet_evaluation,
                                      claude_3_haiku_evaluation]})
 
     # 定义文件路径
@@ -2444,6 +2773,14 @@ with gr.Blocks(css=custom_css) as app:
                                                                        type="filepath", interactive=True)
                 with gr.Row():
                     with gr.Column():
+                        tab_create_oci_cred_region_text = gr.Dropdown(
+                            choices=["ap-osaka-1", "us-chicago-1"],
+                            label="Region*",
+                            interactive=True,
+                            value="ap-osaka-1",
+                        )
+                with gr.Row():
+                    with gr.Column():
                         tab_create_oci_clear_button = gr.ClearButton(value="クリア")
                     with gr.Column():
                         tab_create_oci_cred_button = gr.Button(value="設定/再設定", variant="primary")
@@ -2484,6 +2821,22 @@ with gr.Blocks(css=custom_css) as app:
                 with gr.Row():
                     with gr.Column():
                         tab_create_openai_cred_button = gr.Button(value="設定/再設定", variant="primary")
+            with gr.TabItem(label="Azure OpenAIの設定(オプション)") as tab_create_azure_openai_cred:
+                with gr.Row():
+                    with gr.Column():
+                        tab_create_azure_openai_cred_endpoint_text = gr.Textbox(label="Endpoint*", lines=1,
+                                                                                interactive=True)
+                with gr.Row():
+                    with gr.Column():
+                        tab_create_azure_openai_cred_api_key_text = gr.Textbox(label="API Key*", lines=1,
+                                                                               interactive=True)
+                with gr.Row():
+                    with gr.Column():
+                        tab_create_azure_openai_cred_api_version_text = gr.Textbox(label="API Version*", lines=1,
+                                                                                   interactive=True)
+                with gr.Row():
+                    with gr.Column():
+                        tab_create_azure_openai_cred_button = gr.Button(value="設定/再設定", variant="primary")
             with gr.TabItem(label="Claudeの設定(オプション)") as tab_create_claude_cred:
                 with gr.Row():
                     with gr.Column():
@@ -2514,6 +2867,7 @@ with gr.Blocks(css=custom_css) as app:
                     with gr.Column():
                         tab_chat_with_llm_answer_checkbox_group = gr.CheckboxGroup(
                             ["cohere/command-r", "cohere/command-r-plus", "openai/gpt-4o", "openai/gpt-4",
+                             "azure_openai/gpt-4o", "azure_openai/gpt-4",
                              "claude/opus", "claude/sonnet", "claude/haiku"],
                             label="LLM モデル*", value=[])
                 with gr.Accordion(label="Command-R メッセージ",
@@ -2544,6 +2898,28 @@ with gr.Blocks(css=custom_css) as app:
                                                                        lines=2,
                                                                        autoscroll=True, interactive=False,
                                                                        show_copy_button=True)
+                with gr.Accordion(label="Azure OpenAI gpt-4o メッセージ",
+                                  visible=False,
+                                  open=True) as tab_chat_with_llm_azure_openai_gpt4o_accordion:
+                    tab_chat_with_azure_openai_gpt4o_answer_text = gr.Textbox(
+                        label="LLM メッセージ",
+                        show_label=False,
+                        lines=2,
+                        autoscroll=True,
+                        interactive=False,
+                        show_copy_button=True
+                    )
+                with gr.Accordion(label="Azure OpenAI gpt-4 メッセージ",
+                                  visible=False,
+                                  open=True) as tab_chat_with_llm_azure_openai_gpt4_accordion:
+                    tab_chat_with_azure_openai_gpt4_answer_text = gr.Textbox(
+                        label="LLM メッセージ",
+                        show_label=False,
+                        lines=2,
+                        autoscroll=True,
+                        interactive=False,
+                        show_copy_button=True
+                    )
                 with gr.Accordion(label="Claude 3 Opus メッセージ",
                                   visible=False,
                                   open=True) as tab_chat_with_llm_claude_3_opus_accordion:
@@ -2754,9 +3130,16 @@ with gr.Blocks(css=custom_css) as app:
                 with gr.Row():
                     with gr.Column():
                         tab_chat_document_llm_answer_checkbox_group = gr.CheckboxGroup(
-                            ["cohere/command-r", "cohere/command-r-plus", "openai/gpt-4o", "openai/gpt-4",
-                             "claude/opus",
-                             "claude/sonnet", "claude/haiku"],
+                            [
+                                "cohere/command-r",
+                                "cohere/command-r-plus",
+                                "openai/gpt-4o",
+                                "openai/gpt-4",
+                                "azure_openai/gpt-4o",
+                                "azure_openai/gpt-4",
+                                "claude/opus",
+                                "claude/sonnet",
+                                "claude/haiku"],
                             label="LLM モデル", value=[""])
                 with gr.Row():
                     with gr.Column():
@@ -2996,6 +3379,42 @@ with gr.Blocks(css=custom_css) as app:
                                                                                    lines=2,
                                                                                    autoscroll=True, interactive=False,
                                                                                    show_copy_button=True)
+                with gr.Accordion(label="Azure OpenAI gpt-4o メッセージ",
+                                  visible=False,
+                                  open=True) as tab_chat_document_llm_azure_openai_gpt4o_accordion:
+                    tab_chat_document_azure_openai_gpt4o_answer_text = gr.Textbox(label="LLM メッセージ",
+                                                                                  show_label=False,
+                                                                                  lines=2,
+                                                                                  autoscroll=True, interactive=False,
+                                                                                  show_copy_button=True)
+                    with gr.Accordion(label="評価結果", visible=False,
+                                      open=True) as tab_chat_document_llm_azure_openai_gpt4o_evaluation_accordion:
+                        tab_chat_document_azure_openai_gpt4o_evaluation_text = gr.Textbox(
+                            label="評価結果", show_label=False,
+                            lines=2,
+                            autoscroll=True,
+                            interactive=False,
+                            show_copy_button=True
+                        )
+                with gr.Accordion(label="Azure OpenAI gpt-4 メッセージ",
+                                  visible=False,
+                                  open=True) as tab_chat_document_llm_azure_openai_gpt4_accordion:
+                    tab_chat_document_azure_openai_gpt4_answer_text = gr.Textbox(
+                        label="LLM メッセージ", show_label=False,
+                        lines=2,
+                        autoscroll=True,
+                        interactive=False,
+                        show_copy_button=True
+                    )
+                    with gr.Accordion(label="評価結果", visible=False,
+                                      open=True) as tab_chat_document_llm_azure_openai_gpt4_evaluation_accordion:
+                        tab_chat_document_azure_openai_gpt4_evaluation_text = gr.Textbox(
+                            label="評価結果", show_label=False,
+                            lines=2,
+                            autoscroll=True,
+                            interactive=False,
+                            show_copy_button=True
+                        )
                 with gr.Accordion(label="Claude 3 Opus メッセージ",
                                   visible=False,
                                   open=True) as tab_chat_document_llm_claude_3_opus_accordion:
@@ -3045,9 +3464,13 @@ with gr.Blocks(css=custom_css) as app:
                                      tab_create_oci_cred_fingerprint_text,
                                      tab_create_oci_cred_private_key_file])
     tab_create_oci_cred_button.click(create_oci_cred,
-                                     [tab_create_oci_cred_user_ocid_text, tab_create_oci_cred_tenancy_ocid_text,
-                                      tab_create_oci_cred_fingerprint_text,
-                                      tab_create_oci_cred_private_key_file],
+                                     [
+                                         tab_create_oci_cred_user_ocid_text,
+                                         tab_create_oci_cred_tenancy_ocid_text,
+                                         tab_create_oci_cred_fingerprint_text,
+                                         tab_create_oci_cred_private_key_file,
+                                         tab_create_oci_cred_region_text,
+                                     ],
                                      [tab_create_oci_cred_sql_accordion, tab_create_oci_cred_sql_text])
     tab_create_oci_cred_test_button.click(test_oci_cred, [tab_create_oci_cred_test_query_text],
                                           [tab_create_oci_cred_test_vector_text])
@@ -3057,6 +3480,19 @@ with gr.Blocks(css=custom_css) as app:
     tab_create_openai_cred_button.click(create_openai_cred,
                                         [tab_create_openai_cred_base_url_text, tab_create_openai_cred_api_key_text],
                                         [tab_create_openai_cred_base_url_text, tab_create_openai_cred_api_key_text])
+    tab_create_azure_openai_cred_button.click(
+        create_azure_openai_cred,
+        [
+            tab_create_azure_openai_cred_endpoint_text,
+            tab_create_azure_openai_cred_api_key_text,
+            tab_create_azure_openai_cred_api_version_text
+        ],
+        [
+            tab_create_azure_openai_cred_endpoint_text,
+            tab_create_azure_openai_cred_api_key_text,
+            tab_create_azure_openai_cred_api_version_text
+        ]
+    )
     tab_create_claude_cred_button.click(create_claude_cred,
                                         [tab_create_claude_cred_api_key_text],
                                         [tab_create_claude_cred_api_key_text])
@@ -3067,33 +3503,50 @@ with gr.Blocks(css=custom_css) as app:
                                           [tab_create_langfuse_cred_secret_key_text,
                                            tab_create_langfuse_cred_public_key_text,
                                            tab_create_langfuse_cred_host_text])
-    tab_chat_with_llm_answer_checkbox_group.change(set_chat_llm_answer, [tab_chat_with_llm_answer_checkbox_group],
-                                                   [tab_chat_with_llm_command_r_accordion,
-                                                    tab_chat_with_llm_command_r_plus_accordion,
-                                                    tab_chat_with_llm_openai_gpt4o_accordion,
-                                                    tab_chat_with_llm_openai_gpt4_accordion,
-                                                    tab_chat_with_llm_claude_3_opus_accordion,
-                                                    tab_chat_with_llm_claude_3_sonnet_accordion,
-                                                    tab_chat_with_llm_claude_3_haiku_accordion])
+    tab_chat_with_llm_answer_checkbox_group.change(
+        set_chat_llm_answer,
+        [
+            tab_chat_with_llm_answer_checkbox_group
+        ],
+        [
+            tab_chat_with_llm_command_r_accordion,
+            tab_chat_with_llm_command_r_plus_accordion,
+            tab_chat_with_llm_openai_gpt4o_accordion,
+            tab_chat_with_llm_openai_gpt4_accordion,
+            tab_chat_with_llm_azure_openai_gpt4o_accordion,
+            tab_chat_with_llm_azure_openai_gpt4_accordion,
+            tab_chat_with_llm_claude_3_opus_accordion,
+            tab_chat_with_llm_claude_3_sonnet_accordion,
+            tab_chat_with_llm_claude_3_haiku_accordion
+        ]
+    )
     tab_chat_with_llm_clear_button.add(
         [tab_chat_with_llm_query_text, tab_chat_with_llm_answer_checkbox_group,
          tab_chat_with_command_r_answer_text, tab_chat_with_command_r_plus_answer_text,
          tab_chat_with_openai_gpt4o_answer_text, tab_chat_with_openai_gpt4_answer_text,
+         tab_chat_with_azure_openai_gpt4o_answer_text, tab_chat_with_azure_openai_gpt4_answer_text,
          tab_chat_with_claude_3_opus_answer_text, tab_chat_with_claude_3_sonnet_answer_text,
          tab_chat_with_claude_3_haiku_answer_text
          ])
-    tab_chat_with_llm_chat_button.click(chat_stream,
-                                        inputs=[tab_chat_with_llm_system_text,
-                                                tab_chat_with_llm_query_text,
-                                                tab_chat_with_llm_answer_checkbox_group],
-                                        outputs=[tab_chat_with_command_r_answer_text,
-                                                 tab_chat_with_command_r_plus_answer_text,
-                                                 tab_chat_with_openai_gpt4o_answer_text,
-                                                 tab_chat_with_openai_gpt4_answer_text,
-                                                 tab_chat_with_claude_3_opus_answer_text,
-                                                 tab_chat_with_claude_3_sonnet_answer_text,
-                                                 tab_chat_with_claude_3_haiku_answer_text
-                                                 ])
+    tab_chat_with_llm_chat_button.click(
+        chat_stream,
+        inputs=[
+            tab_chat_with_llm_system_text,
+            tab_chat_with_llm_query_text,
+            tab_chat_with_llm_answer_checkbox_group
+        ],
+        outputs=[
+            tab_chat_with_command_r_answer_text,
+            tab_chat_with_command_r_plus_answer_text,
+            tab_chat_with_openai_gpt4o_answer_text,
+            tab_chat_with_openai_gpt4_answer_text,
+            tab_chat_with_azure_openai_gpt4o_answer_text,
+            tab_chat_with_azure_openai_gpt4_answer_text,
+            tab_chat_with_claude_3_opus_answer_text,
+            tab_chat_with_claude_3_sonnet_answer_text,
+            tab_chat_with_claude_3_haiku_answer_text
+        ]
+    )
     tab_create_table_button.click(create_table, [], [tab_create_table_sql_accordion, tab_create_table_sql_text])
     tab_load_document_load_button.click(load_document,
                                         inputs=[tab_load_document_file_text, tab_load_document_server_directory_text],
@@ -3159,15 +3612,23 @@ with gr.Blocks(css=custom_css) as app:
         lambda x: gr.CheckboxGroup(interactive=False, value="") if x else gr.CheckboxGroup(
             interactive=True, value=""),
         tab_chat_document_doc_id_all_checkbox, tab_chat_document_doc_id_checkbox_group)
-    tab_chat_document_llm_answer_checkbox_group.change(set_chat_llm_answer,
-                                                       [tab_chat_document_llm_answer_checkbox_group],
-                                                       [tab_chat_document_llm_command_r_accordion,
-                                                        tab_chat_document_llm_command_r_plus_accordion,
-                                                        tab_chat_document_llm_openai_gpt4o_accordion,
-                                                        tab_chat_document_llm_openai_gpt4_accordion,
-                                                        tab_chat_document_llm_claude_3_opus_accordion,
-                                                        tab_chat_document_llm_claude_3_sonnet_accordion,
-                                                        tab_chat_document_llm_claude_3_haiku_accordion])
+    tab_chat_document_llm_answer_checkbox_group.change(
+        set_chat_llm_answer,
+        [
+            tab_chat_document_llm_answer_checkbox_group
+        ],
+        [
+            tab_chat_document_llm_command_r_accordion,
+            tab_chat_document_llm_command_r_plus_accordion,
+            tab_chat_document_llm_openai_gpt4o_accordion,
+            tab_chat_document_llm_openai_gpt4_accordion,
+            tab_chat_document_llm_azure_openai_gpt4o_accordion,
+            tab_chat_document_llm_azure_openai_gpt4_accordion,
+            tab_chat_document_llm_claude_3_opus_accordion,
+            tab_chat_document_llm_claude_3_sonnet_accordion,
+            tab_chat_document_llm_claude_3_haiku_accordion
+        ]
+    )
     tab_chat_document_llm_evaluation_checkbox.change(
         lambda x: (
             gr.Textbox(visible=True, interactive=True),
@@ -3184,6 +3645,8 @@ with gr.Blocks(css=custom_css) as app:
                tab_chat_document_llm_command_r_plus_evaluation_accordion,
                tab_chat_document_llm_openai_gpt4o_evaluation_accordion,
                tab_chat_document_llm_openai_gpt4_evaluation_accordion,
+               tab_chat_document_llm_azure_openai_gpt4o_evaluation_accordion,
+               tab_chat_document_llm_azure_openai_gpt4_evaluation_accordion,
                tab_chat_document_llm_claude_3_opus_evaluation_accordion,
                tab_chat_document_llm_claude_3_sonnet_evaluation_accordion,
                tab_chat_document_llm_claude_3_haiku_evaluation_accordion])
@@ -3227,6 +3690,8 @@ with gr.Blocks(css=custom_css) as app:
                                                                         tab_chat_document_command_r_plus_answer_text,
                                                                         tab_chat_document_openai_gpt4o_answer_text,
                                                                         tab_chat_document_openai_gpt4_answer_text,
+                                                                        tab_chat_document_azure_openai_gpt4o_answer_text,
+                                                                        tab_chat_document_azure_openai_gpt4_answer_text,
                                                                         tab_chat_document_claude_3_opus_answer_text,
                                                                         tab_chat_document_claude_3_sonnet_answer_text,
                                                                         tab_chat_document_claude_3_haiku_answer_text]
@@ -3240,6 +3705,8 @@ with gr.Blocks(css=custom_css) as app:
                                                                           tab_chat_document_command_r_plus_answer_text,
                                                                           tab_chat_document_openai_gpt4o_answer_text,
                                                                           tab_chat_document_openai_gpt4_answer_text,
+                                                                          tab_chat_document_azure_openai_gpt4o_answer_text,
+                                                                          tab_chat_document_azure_openai_gpt4_answer_text,
                                                                           tab_chat_document_claude_3_opus_answer_text,
                                                                           tab_chat_document_claude_3_sonnet_answer_text,
                                                                           tab_chat_document_claude_3_haiku_answer_text],
@@ -3248,6 +3715,8 @@ with gr.Blocks(css=custom_css) as app:
                                                                           tab_chat_document_command_r_plus_evaluation_text,
                                                                           tab_chat_document_openai_gpt4o_evaluation_text,
                                                                           tab_chat_document_openai_gpt4_evaluation_text,
+                                                                          tab_chat_document_azure_openai_gpt4o_evaluation_text,
+                                                                          tab_chat_document_azure_openai_gpt4_evaluation_text,
                                                                           tab_chat_document_claude_3_opus_evaluation_text,
                                                                           tab_chat_document_claude_3_sonnet_evaluation_text,
                                                                           tab_chat_document_claude_3_haiku_evaluation_text]
@@ -3262,6 +3731,8 @@ with gr.Blocks(css=custom_css) as app:
                                                                                  tab_chat_document_command_r_plus_answer_text,
                                                                                  tab_chat_document_openai_gpt4o_answer_text,
                                                                                  tab_chat_document_openai_gpt4_answer_text,
+                                                                                 tab_chat_document_azure_openai_gpt4o_answer_text,
+                                                                                 tab_chat_document_azure_openai_gpt4_answer_text,
                                                                                  tab_chat_document_claude_3_opus_answer_text,
                                                                                  tab_chat_document_claude_3_sonnet_answer_text,
                                                                                  tab_chat_document_claude_3_haiku_answer_text,
@@ -3269,6 +3740,8 @@ with gr.Blocks(css=custom_css) as app:
                                                                                  tab_chat_document_command_r_plus_evaluation_text,
                                                                                  tab_chat_document_openai_gpt4o_evaluation_text,
                                                                                  tab_chat_document_openai_gpt4_evaluation_text,
+                                                                                 tab_chat_document_azure_openai_gpt4o_evaluation_text,
+                                                                                 tab_chat_document_azure_openai_gpt4_evaluation_text,
                                                                                  tab_chat_document_claude_3_opus_evaluation_text,
                                                                                  tab_chat_document_claude_3_sonnet_evaluation_text,
                                                                                  tab_chat_document_claude_3_haiku_evaluation_text
